@@ -324,7 +324,15 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   const beforeZoom = await snapshot();
   await micPage.getByRole("button", { name: "Zoom in" }).click();
   if (await snapshot() === beforeZoom) errors.push(`[${tag}] zoom did not change the head`);
-  await micPage.getByRole("button", { name: "3D", exact: true }).click();
+  await micPage.getByRole("button", { name: "Whole head", exact: true }).click();
+  if (await snapshot() === rest) errors.push(`[${tag}] whole head matched the inside-mouth view`);
+  await micPage.getByRole("button", { name: "Tongue profile", exact: true }).click();
+  if (!await micPage.locator("#contour-credit").isVisible()) errors.push(`[${tag}] tongue profile is missing its reference`);
+  await micPage.getByRole("button", { name: "Inside mouth", exact: true }).click();
+  const nearTeeth = micPage.getByRole("checkbox", { name: "Show near teeth" });
+  await nearTeeth.check();
+  if (await snapshot() === rest) errors.push(`[${tag}] near teeth stayed hidden`);
+  await nearTeeth.uncheck();
   await micPage.getByRole("button", { name: "Reset view" }).click();
   if (await snapshot() !== rest) errors.push(`[${tag}] head did not return to its home view`);
   await micPage.getByRole("button", { name: "Start microphone" }).click();
