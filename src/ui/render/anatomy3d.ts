@@ -668,7 +668,6 @@ export const APP_DRAWING: Readonly<HeadDrawing> = { inner: 1, bone: 1, outline: 
 export class Anatomy3D {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(24, 1, 5, 2000);
-  private readonly beams = new Beams();
   private rest: Rest | null = null;
   private w = 1;
   private h = 1;
@@ -708,7 +707,7 @@ export class Anatomy3D {
   /** the narrowest constriction this frame (for the measurement label), body cm */
   caliper: { x: number; y: number; z: number; area: number } | null = null;
 
-  constructor() {
+  constructor(private readonly beams = new Beams()) {
     this.scene.add(this.beams.group);
     this.scene.fog = new THREE.Fog(0x000000, 50, 100);
     for (let i = 0; i < 200; i++) this.particles.push({ s: Math.random() * 17, u: Math.random() * 2 - 1, v: Math.random() * 2 - 1, life: Math.random(), px: NaN, py: NaN, pz: NaN });

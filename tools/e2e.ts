@@ -303,8 +303,33 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   await page.getByRole("link", { name: "Microphone", exact: true }).click();
   const micPage = await newTab;
   micPage.on("pageerror", (e) => errors.push(`[${tag}] microphone: ${e.message}`));
+  // The standalone page once shipped its charts without the head. Check actual pixels before
+  // any microphone permission, and require the projection to change when viewed from the side.
+  const head = micPage.locator("#head-view");
+  const snapshot = () => head.evaluate((c: HTMLCanvasElement) => c.toDataURL());
+  const rest = await snapshot();
+  const anatomicalPixels = await head.evaluate((c: HTMLCanvasElement) => {
+    const rgba = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let visible = 0;
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] > 32) visible++;
+    return visible;
+  });
+  if (anatomicalPixels < 2000) errors.push(`[${tag}] standalone head is blank`);
+  await head.press("ArrowLeft");
+  const rotated = await snapshot();
+  if (rotated === rest) errors.push(`[${tag}] 3D head did not rotate`);
+  await micPage.getByRole("button", { name: "2D section" }).click();
+  const section = micPage.getByRole("button", { name: "2D section" });
+  if (await snapshot() === rotated || await section.getAttribute("aria-pressed") !== "true") errors.push(`[${tag}] head did not switch to a section`);
+  const beforeZoom = await snapshot();
+  await micPage.getByRole("button", { name: "Zoom in" }).click();
+  if (await snapshot() === beforeZoom) errors.push(`[${tag}] zoom did not change the head`);
+  await micPage.getByRole("button", { name: "3D", exact: true }).click();
+  await micPage.getByRole("button", { name: "Reset view" }).click();
+  if (await snapshot() !== rest) errors.push(`[${tag}] head did not return to its home view`);
   await micPage.getByRole("button", { name: "Start microphone" }).click();
   await micPage.waitForFunction(() => document.querySelector("#peak")?.textContent?.endsWith(" Hz"));
+  if (await snapshot() === rest) errors.push(`[${tag}] microphone signal did not animate the head`);
   await micPage.screenshot({ path: `${outDir}/${tag}-microphone.png`, fullPage: true });
   await micPage.getByRole("button", { name: "Stop microphone" }).click();
   const micReleased = await micPage.evaluate(() => (window as unknown as { micTrack: MediaStreamTrack }).micTrack.readyState === "ended");

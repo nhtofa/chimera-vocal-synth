@@ -41,7 +41,9 @@ for tests and the `chimera` CLI.
   rules), Japanese (kana, one mora per note) or Russian; each language is a front end
   ([docs/language-front-ends.md](docs/language-front-ends.md)).
 - **Microphone**: choose **Microphone** in the top bar. In the new tab, click **Start microphone**, allow
-  access, and speak. The waveform shows the last 20 ms of sound. The spectrum shows which
+  access, and speak. The 3D wireframe head appears as soon as the page opens. Drag to
+  rotate it, or choose **2D section** for the side cutaway. The mouth animation illustrates
+  loudness and the balance of low and high frequencies. The waveform shows the last 20 ms of sound. The spectrum shows which
   frequencies are strongest. Audio stays in your browser. **Stop microphone** releases the input.
 - **Beatbox**: pads and a step sequencer, every drum an articulatory gesture.
 - **Bestiary**: songbird (two-voice syrinx), seal, alligator and elephant.
@@ -70,6 +72,10 @@ The microphone page also runs on its own without the synth toolchain. From the r
 ```sh
 python -m http.server 8000 --bind 127.0.0.1 --directory public
 ```
+
+You can also open the single file `public/microphone.html` directly in Chrome or Edge.
+The head geometry is embedded in the HTML. After changing the synth's head model, run
+`bun run wasm` and `bun tools/gen-microphone-head.ts` to refresh it.
 
 Open [the microphone page on localhost](http://localhost:8000/microphone.html).
 To use a phone, open the hosted page over HTTPS and allow microphone access on that device.
