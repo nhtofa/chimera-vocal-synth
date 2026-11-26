@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#03080c">
+  <link rel="icon" href="data:,">
+  <title>Microphone · Chimera</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --paper: #03080c;
+      --panel: #071119;
+      --line: #254253;
+      --ink: #eaf7ff;
+      --label: #a9dcf8;
+      --amber: #ffb340;
+      font-family: system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); }
+    main { width: min(980px, 100%); margin: auto; padding: 28px clamp(16px, 4vw, 48px) 48px; }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+    .brand { color: var(--label); font-size: 20px; font-weight: 700; letter-spacing: .04em; }
+    h1 { margin: 24px 0 6px; font-size: clamp(28px, 5vw, 42px); line-height: 1.1; }
+    p { margin: 0; line-height: 1.5; }
+    .intro, figcaption span { color: var(--label); }
+    .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin: 18px 0; }
+    button { padding: 10px 18px; min-height: 44px; color: #15100a; background: var(--amber); border: 1px solid var(--amber); font: inherit; font-weight: 650; cursor: pointer; }
+    button.active { background: transparent; color: var(--amber); }
+    :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+    [role="status"] { font-size: 15px; }
+    figure { margin: 16px 0 0; border: 1px solid var(--line); background: var(--panel); }
+    figcaption { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+    figcaption strong { font-size: 18px; }
+    figcaption span { font: 13px ui-monospace, monospace; }
+    canvas { display: block; width: 100%; height: clamp(145px, 22vh, 220px); }
+    .note { margin-top: 16px; color: var(--label); font-size: 14px; }
+    @media (max-width: 520px) {
+      main { padding-top: 16px; }
+      .controls { align-items: start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header><span class="brand">Chimera</span></header>
+    <h1>Microphone</h1>
+    <p class="intro">Start the microphone and speak to see your sound.</p>
+    <div class="controls">
+      <button id="toggle" type="button">Start microphone</button>
+      <p id="status" role="status">Microphone off</p>
+    </div>
+    <figure>
+      <figcaption><strong>Waveform</strong><span>Input level <b id="level">—</b></span></figcaption>
+      <canvas id="wave" role="img" aria-label="Microphone waveform over the last 20 milliseconds"></canvas>
+    </figure>
+    <figure>
+      <figcaption><strong>Frequency spectrum</strong><span>Strongest frequency <b id="peak">—</b></span></figcaption>
+      <canvas id="spectrum" role="img" aria-label="Microphone spectrum from low to high frequencies"></canvas>
+    </figure>
+    <p class="note">Your audio stays in this browser. You can stop the microphone at any time.</p>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const toggle = $("toggle");
+    const wave = $("wave");
+    const spectrum = $("spectrum");
+    const waveMs = 20;
+    const minHz = 50;
+    const floorDb = -90;
+    let session = null;
+
+    function drawChart(canvas, xTicks, yTicks, trace) {
+      const width = canvas.clientWidth, height = canvas.clientHeight;
+      if (!width || !height) return;
+      const ratio = Math.min(window.devicePixelRatio || 1, 3);
+      const pxWidth = Math.round(width * ratio), pxHeight = Math.round(height * ratio);
+      if (canvas.width !== pxWidth || canvas.height !== pxHeight) {
+        canvas.width = pxWidth;
+        canvas.height = pxHeight;
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(pxWidth / width, 0, 0, pxHeight / height, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      const left = 48, top = 15, right = width - 19, bottom = height - 26;
+      const x = (fraction) => left + fraction * (right - left);
+      const y = (fraction) => bottom - fraction * (bottom - top);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "#254253";
+      ctx.fillStyle = "#a9dcf8";
+      ctx.font = "12px ui-monospace, monospace";
+      ctx.beginPath();
+      for (const [pos, label] of xTicks) {
+        ctx.moveTo(x(pos), top);
+        ctx.lineTo(x(pos), bottom);
+        ctx.textAlign = pos === 0 ? "left" : pos === 1 ? "right" : "center";
+        ctx.fillText(label, x(pos), height - 7);
+      }
+      for (const [pos, label] of yTicks) {
+        ctx.moveTo(left, y(pos));
+        ctx.lineTo(right, y(pos));
+        ctx.textAlign = "right";
+        ctx.fillText(label, left - 6, y(pos) + 4);
+      }
+      ctx.stroke();
+      ctx.beginPath();
+      trace(ctx, x, y, Math.max(1, right - left));
+      ctx.strokeStyle = "#ffb340";
+      ctx.lineWidth = 1.7;
+      ctx.stroke();
+    }
+
+    function render(now = 0) {
+      const input = session?.analyser ? session : null;
+      let amplitude = 0, energy = 0, peakHz = 0, peakDb = -Infinity;
+      const rate = input?.context.sampleRate ?? 48000;
+      const maxHz = Math.min(12000, rate / 2);
+      const hzPosition = (hz) => Math.log(hz / minHz) / Math.log(maxHz / minHz);
+      const samples = input?.samples, bins = input?.bins;
+      const count = samples ? Math.min(samples.length, Math.round(rate * waveMs / 1000)) : 0;
+      const start = samples ? samples.length - count : 0;
+      if (input) {
+        input.analyser.getFloatTimeDomainData(samples);
+        input.analyser.getFloatFrequencyData(bins);
+        for (let i = start; i < samples.length; i++) {
+          amplitude = Math.max(amplitude, Math.abs(samples[i]));
+          energy += samples[i] * samples[i];
+        }
+      }
+      // Scale the waveform to show quiet speech. The axis labels give its actual amplitude.
+      const scale = amplitude <= 0.05 && input ? 0.05 : amplitude <= 0.25 && input ? 0.25 : Math.max(1, Math.ceil(amplitude));
+      drawChart(wave, [[0, "−20 ms"], [0.5, "−10 ms"], [1, "Now"]],
+        [[0, "−" + scale], [0.5, "0"], [1, "+" + scale]], (ctx, x, y, pixels) => {
+          if (!samples) return;
+          // Keep short peaks even when a screen pixel spans several samples.
+          const columns = Math.min(pixels, count);
+          for (let c = 0; c < columns; c++) {
+            const first = start + Math.floor(c * count / columns);
+            const end = start + Math.floor((c + 1) * count / columns);
+            let low = samples[first], high = low;
+            for (let i = first + 1; i < end; i++) {
+              low = Math.min(low, samples[i]);
+              high = Math.max(high, samples[i]);
+            }
+            const at = x(c / Math.max(1, columns - 1));
+            const lowY = y(0.5 + low / (2 * scale));
+            if (c === 0) ctx.moveTo(at, lowY);
+            else ctx.lineTo(at, lowY);
+            ctx.lineTo(at, y(0.5 + high / (2 * scale)));
+          }
+        });
+
+      const ticks = [[0, "50 Hz"], [hzPosition(200), "200"], [hzPosition(1000), "1k"], [1, (maxHz / 1000) + " kHz"]];
+      drawChart(spectrum, ticks, [[0, "−90"], [1 / 3, "−60"], [2 / 3, "−30"], [1, "0 dB"]],
+        (ctx, x, y) => {
+          if (!bins) return;
+          const binHz = rate / input.analyser.fftSize;
+          const first = Math.ceil(minHz / binHz);
+          for (let i = first; i < bins.length && i * binHz <= maxHz; i++) {
+            const db = bins[i];
+            if (db > peakDb) {
+              peakDb = db;
+              peakHz = i * binHz;
+            }
+            const at = x(hzPosition(i * binHz));
+            const level = Math.max(0, Math.min(1, (db - floorDb) / -floorDb));
+            if (i === first) ctx.moveTo(at, y(level));
+            else ctx.lineTo(at, y(level));
+          }
+        });
+      if (input && now >= input.nextReading) {
+        const rms = Math.sqrt(energy / count);
+        $("level").textContent = rms > 0.000032 ? Math.round(20 * Math.log10(rms)) + " dBFS" : "Quiet";
+        $("peak").textContent = peakDb > floorDb ? Math.round(peakHz) + " Hz" : "—";
+        input.nextReading = now + 150;
+      }
+    }
+
+    function stop(message = "Microphone off") {
+      const old = session;
+      session = null;
+      if (old) {
+        cancelAnimationFrame(old.frame);
+        old.stream?.getTracks().forEach((track) => track.stop());
+        old.source?.disconnect();
+        old.analyser?.disconnect();
+        if (old.context && old.context.state !== "closed") void old.context.close().catch(() => {});
+      }
+      toggle.textContent = "Start microphone";
+      toggle.classList.remove("active");
+      $("status").textContent = message;
+      $("level").textContent = $("peak").textContent = "—";
+      render();
+    }
+
+    function errorMessage(error) {
+      switch (error.name) {
+        case "NotAllowedError":
+        case "SecurityError": return "Microphone access was blocked. Allow it in your browser’s site settings and try again.";
+        case "NotFoundError": return "No microphone found. Connect one and try again.";
+        case "NotReadableError": return "The microphone is unavailable. Check your input device and try again.";
+        default: return "Could not start the microphone. Check your input device and try again.";
+      }
+    }
+
+    async function start() {
+      if (!window.isSecureContext) return stop("Open this page over HTTPS or on localhost to use your microphone.");
+      if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) return stop("This browser does not support live microphone input.");
+      const input = { frame: 0, nextReading: 0 };
+      session = input;
+      toggle.textContent = "Cancel";
+      toggle.classList.add("active");
+      $("status").textContent = "Waiting for microphone access…";
+      try {
+        // Resume within the button gesture. Keep track of a late permission grant after Cancel.
+        input.context = new AudioContext();
+        const resume = input.context.resume();
+        const capture = navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          if (session !== input) stream.getTracks().forEach((track) => track.stop());
+          else {
+            input.stream = stream;
+            const track = stream.getAudioTracks()[0];
+            const ended = () => {
+              if (session === input) stop("Microphone disconnected. Check your input device and try again.");
+            };
+            track.addEventListener("ended", ended, { once: true });
+            if (track.readyState === "ended") ended();
+          }
+        });
+        await Promise.all([capture, resume]);
+        if (session !== input) return;
+        input.analyser = input.context.createAnalyser();
+        input.analyser.fftSize = 4096;
+        input.analyser.smoothingTimeConstant = 0.55;
+        input.samples = new Float32Array(input.analyser.fftSize);
+        input.bins = new Float32Array(input.analyser.frequencyBinCount);
+        input.source = input.context.createMediaStreamSource(input.stream);
+        input.source.connect(input.analyser); // Analysis only. No connection to the speakers.
+        toggle.textContent = "Stop microphone";
+        $("status").textContent = "Listening";
+        let lastFrame = -Infinity;
+        function tick(now) {
+          if (session !== input) return;
+          if (now - lastFrame >= 1000 / 30) {
+            render(now);
+            lastFrame = now;
+          }
+          input.frame = requestAnimationFrame(tick);
+        }
+        input.frame = requestAnimationFrame(tick);
+      } catch (error) {
+        if (session === input) stop(errorMessage(error));
+      }
+    }
+
+    toggle.addEventListener("click", () => session ? stop() : void start());
+    window.addEventListener("pagehide", () => stop());
+    window.addEventListener("resize", () => render(performance.now()));
+    render();
+  </script>
+</body>
+</html>

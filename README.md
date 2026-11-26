@@ -40,11 +40,14 @@ for tests and the `chimera` CLI.
   Latin script can't tell them apart), Korean (Hangul: one block per note, with Korean sound
   rules), Japanese (kana, one mora per note) or Russian; each language is a front end
   ([docs/language-front-ends.md](docs/language-front-ends.md)).
+- **Microphone**: choose **Microphone** in the top bar. In the new tab, click **Start microphone**, allow
+  access, and speak. The waveform shows the last 20 ms of sound. The spectrum shows which
+  frequencies are strongest. Audio stays in your browser. **Stop microphone** releases the input.
 - **Beatbox**: pads and a step sequencer, every drum an articulatory gesture.
 - **Bestiary**: songbird (two-voice syrinx), seal, alligator and elephant.
 - **Duet** (`?show=<id>`): two 3D heads replay a pre-rendered song.
 
-Male, female and child bodies blend continuously. Everything on screen animates from live
+Male, female and child bodies blend continuously. The synth views animate from live
 engine state: pressure in the airway, airflow, the vocal folds, spectra and formants.
 
 ## Run it
@@ -59,6 +62,17 @@ bun run test       # wasm build, cargo test --workspace, bun test tests
 
 The AudioWorklet needs a secure context, so open it on localhost or over HTTPS (for example
 `tailscale serve`). Vercel builds it with `vercel.json`.
+
+### Run just the microphone visualizer
+
+The microphone page also runs on its own without the synth toolchain. From the repository root:
+
+```sh
+python -m http.server 8000 --bind 127.0.0.1 --directory public
+```
+
+Open [the microphone page on localhost](http://localhost:8000/microphone.html).
+To use a phone, open the hosted page over HTTPS and allow microphone access on that device.
 
 ## As a plugin
 

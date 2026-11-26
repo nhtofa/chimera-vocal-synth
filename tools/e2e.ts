@@ -12,7 +12,7 @@ mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,
-  args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream"],
+  args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
 });
 const errors: string[] = [];
 const logs: string[] = [];
@@ -289,6 +289,27 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   });
   logs.push(`[${tag}] rate after the run: ${rate} Hz`);
   if (rate !== 48000) errors.push(`[${tag}] this machine fell back to ${rate} Hz (it keeps up at 48 kHz)`);
+  // Follow the same link a user sees. Watch Chromium's fake mic to verify both sound and release.
+  await page.context().addInitScript(() => {
+    const devices = navigator.mediaDevices;
+    const capture = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = async (constraints) => {
+      const stream = await capture(constraints);
+      (window as unknown as { micTrack: MediaStreamTrack }).micTrack = stream.getAudioTracks()[0];
+      return stream;
+    };
+  });
+  const newTab = page.context().waitForEvent("page");
+  await page.getByRole("link", { name: "Microphone", exact: true }).click();
+  const micPage = await newTab;
+  micPage.on("pageerror", (e) => errors.push(`[${tag}] microphone: ${e.message}`));
+  await micPage.getByRole("button", { name: "Start microphone" }).click();
+  await micPage.waitForFunction(() => document.querySelector("#peak")?.textContent?.endsWith(" Hz"));
+  await micPage.screenshot({ path: `${outDir}/${tag}-microphone.png`, fullPage: true });
+  await micPage.getByRole("button", { name: "Stop microphone" }).click();
+  const micReleased = await micPage.evaluate(() => (window as unknown as { micTrack: MediaStreamTrack }).micTrack.readyState === "ended");
+  if (!micReleased) errors.push(`[${tag}] Stop left the microphone active`);
+  await micPage.close();
   await page.close();
 }
 
