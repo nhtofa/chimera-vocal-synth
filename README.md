@@ -40,11 +40,18 @@ for tests and the `chimera` CLI.
   Latin script can't tell them apart), Korean (Hangul: one block per note, with Korean sound
   rules), Japanese (kana, one mora per note) or Russian; each language is a front end
   ([docs/language-front-ends.md](docs/language-front-ends.md)).
+- **Microphone** opens a live cutaway of the mouth. Click **Start microphone**, allow access, and
+  speak. Try “ah, ee, oo” to see the tongue body, lips and jaw change shape. **Show near teeth**
+  reveals the full dental arches. Drag the model to rotate it, or switch to **Whole head**,
+  **2D section** or **Tongue profile**. The profile interpolates published model predictions derived from
+  synchronized tongue ultrasound and speech audio. The 3D gestures are estimates from the most recent 32 ms of
+  sound. The waveform and spectrum show the actual input. **Calibrate vowels to my voice** adapts
+  the three anchor vowels for the current page session. **Stop microphone** releases the device.
 - **Beatbox**: pads and a step sequencer, every drum an articulatory gesture.
 - **Bestiary**: songbird (two-voice syrinx), seal, alligator and elephant.
 - **Duet** (`?show=<id>`): two 3D heads replay a pre-rendered song.
 
-Male, female and child bodies blend continuously. Everything on screen animates from live
+Male, female and child bodies blend continuously. The synth views animate from live
 engine state: pressure in the airway, airflow, the vocal folds, spectra and formants.
 
 ## Run it
@@ -59,6 +66,24 @@ bun run test       # wasm build, cargo test --workspace, bun test tests
 
 The AudioWorklet needs a secure context, so open it on localhost or over HTTPS (for example
 `tailscale serve`). Vercel builds it with `vercel.json`.
+
+### Run just the microphone visualizer
+
+The microphone page also runs on its own without the synth toolchain. From the repository root:
+
+```sh
+python -m http.server 8000 --bind 127.0.0.1 --directory public
+```
+
+You can also open the single file `public/microphone.html` directly in Chrome or Edge.
+The page embeds its geometry, speech estimator and renderer. Run `bun run wasm` and
+`bun tools/gen-microphone-head.ts` to refresh the download after changing the head or a script in
+`src/microphone/`. The cutaway uses WebGL when available and a software depth buffer otherwise.
+Audio processing runs locally. The 2D vowel reference is adapted from Figure 2 of the
+[AURORA preprint](https://arxiv.org/html/2603.17543v1) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+Open [the microphone page on localhost](http://localhost:8000/microphone.html).
+To use a phone, open the hosted page over HTTPS and allow microphone access on that device.
 
 ## As a plugin
 

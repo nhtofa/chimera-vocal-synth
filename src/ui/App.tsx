@@ -89,6 +89,7 @@ function TopBar() {
             Engine load {Math.round(load * 100)} %{light && " · 32 kHz"}
           </span>
         ) : null}
+        {!inPlugin && <a className="plugin-link" href="./microphone.html" target="_blank" rel="noopener" title="Open the microphone visualizer in a new tab">Microphone</a>}
         {!inPlugin && (
           <a className="plugin-link" href="/plugin/" title="CHIMERA as a CLAP, VST3 and AU plugin for your DAW">
             Plugin

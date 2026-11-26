@@ -187,8 +187,12 @@ class Lines {
   }
 }
 
-/** static lines in one style */
+/** Named stroke groups for consumers that bake the anatomy. */
+export type AnatomyPart = "other" | "tongue" | "upperTeeth" | "lowerTeeth" | "jaw" | "lips" | "velum" | "palate" | "airway";
+
+/** Static lines in one style. */
 interface Group {
+  part?: AnatomyPart;
   lines: Float32Array[];
   color: string;
   width: number;
@@ -397,10 +401,10 @@ function buildRest(model: VoiceModel): Rest {
 
   const fixed: Group[] = [];
   const jaw: Group[] = [];
-  const group = (into: Group[], color: string, width: number, alpha: number, fill: (L: Lines) => void, hot = false, kind?: Group["kind"]) => {
+  const group = (into: Group[], color: string, width: number, alpha: number, fill: (L: Lines) => void, hot = false, kind?: Group["kind"], part?: AnatomyPart) => {
     const L = new Lines();
     fill(L);
-    into.push({ lines: L.lines, color, width, alpha, hot, kind });
+    into.push({ lines: L.lines, color, width, alpha, hot, kind, part });
   };
   /** a template outline on the side of the head, standing out from it by `off` (body cm) */
   const onSide = (L: Lines, pts: [number, number][], off: (i: number, n: number) => number, side: number) => {
@@ -550,7 +554,7 @@ function buildRest(model: VoiceModel): Rest {
     }
   };
   const upFront = P(7.3, 0).x, upDepth = 4.2 * k, upHalf = 2.65 * k;
-  group(fixed, V.blue, 1.0, 0.8, (L) => teeth(L, upFront, upDepth, upHalf, UPPER_TEETH, (u) => (7.95 + 0.3 * u * u) * k, 1), false, "bone");
+  group(fixed, V.blue, 1.0, 0.8, (L) => teeth(L, upFront, upDepth, upHalf, UPPER_TEETH, (u) => (7.95 + 0.3 * u * u) * k, 1), false, "bone", "upperTeeth");
   group(fixed, V.blueMid, 1.0, 0.6, (L) => {
     for (const i of [0, 2, 4, 5, 6, 7]) {
       const m = prof.palOral[i];
@@ -565,7 +569,7 @@ function buildRest(model: VoiceModel): Rest {
       }
       L.end();
     }
-  });
+  }, false, undefined, "palate");
 
   // ---- the mandible (rest pose; the jaw turns it about the condyles)
   const M = (x: number, y: number, z: number): V3 => {
@@ -608,7 +612,7 @@ function buildRest(model: VoiceModel): Rest {
   mline(chinL, [[7.25, 6.75, 0], [7.4, 5.4, 0], [6.4, 4.6, 0], [5.6, 5.0, 0], [5.9, 6.2, 0], [6.45, 6.55, 0]], 1);
   const chin = chinL.lines[0];
   const loFront = P(6.98, 0).x, loDepth = 4.0 * k, loHalf = 2.5 * k;
-  group(jaw, V.blue, 1.0, 0.8, (L) => teeth(L, loFront, loDepth, loHalf, LOWER_TEETH, (u) => (7.75 + 0.45 * Math.pow(u, 1.5)) * k, -1));
+  group(jaw, V.blue, 1.0, 0.8, (L) => teeth(L, loFront, loDepth, loHalf, LOWER_TEETH, (u) => (7.75 + 0.45 * Math.pow(u, 1.5)) * k, -1), false, undefined, "lowerTeeth");
 
   // eyes: the 2D view draws one on the midline; here they sit either side of the nose
   const eyeC = B(6.15, 15.35);
@@ -668,7 +672,6 @@ export const APP_DRAWING: Readonly<HeadDrawing> = { inner: 1, bone: 1, outline: 
 export class Anatomy3D {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(24, 1, 5, 2000);
-  private readonly beams = new Beams();
   private rest: Rest | null = null;
   private w = 1;
   private h = 1;
@@ -708,7 +711,8 @@ export class Anatomy3D {
   /** the narrowest constriction this frame (for the measurement label), body cm */
   caliper: { x: number; y: number; z: number; area: number } | null = null;
 
-  constructor() {
+  /** Optional stroke grouping for baking the standalone microphone anatomy. */
+  constructor(private readonly beams = new Beams(), private readonly markPart?: (part: AnatomyPart) => void) {
     this.scene.add(this.beams.group);
     this.scene.fog = new THREE.Fog(0x000000, 50, 100);
     for (let i = 0; i < 200; i++) this.particles.push({ s: Math.random() * 17, u: Math.random() * 2 - 1, v: Math.random() * 2 - 1, life: Math.random(), px: NaN, py: NaN, pz: NaN });
@@ -951,6 +955,7 @@ export class Anatomy3D {
     const d = this.drawing, pop = d.parts?.pop, widen = pop ?? Math.min(1.35, 1 + 0.45 * Math.max(0, d.features - 1));
     B.fade = d.fade;
     for (const g of rest.fixed) {
+      this.markPart?.(g.part ?? "other");
       const feature = g.kind === "feature";
       B.gain = feature ? d.features : g.kind === "bone" ? d.bone : g.kind === "outer" ? (d.parts?.ears ?? 1) : g.kind === "brain" ? (d.parts?.brain ?? d.inner) : g.kind === "spine" ? (d.parts?.spine ?? d.inner) : d.inner;
       const color = feature && d.features > 1 ? V.blue : g.color;
@@ -958,6 +963,7 @@ export class Anatomy3D {
     }
     B.gain = d.bone;
     for (const g of rest.jaw) {
+      this.markPart?.(g.part ?? "jaw");
       for (const l of g.lines) {
         const P = this.tmp.reset();
         for (let i = 0; i < l.length; i += 3) {
@@ -967,6 +973,7 @@ export class Anatomy3D {
         B.poly(P, g.color, g.width, { alpha: g.alpha, hot: g.hot });
       }
     }
+    this.markPart?.("other");
     B.gain = d.shell;
     for (const sk of d.shell > 0 ? rest.shell : []) {
       const P = this.tmp.reset();
@@ -989,8 +996,10 @@ export class Anatomy3D {
     line(G.sulcus, V.blueDim, 0.9);
     B.gain = d.inner;
     line(G.nasal, V.blueMid, 1, { close: true });
+    this.markPart?.("palate");
     line(G.palOral, V.blueMid, 1.1);
     line(G.palNasal, V.blueMid, 1.1);
+    this.markPart?.("other");
     B.gain = d.outline;
     line(G.skinLower, V.blue, 1.5);
     line(G.skinUpper, V.blue, 1.5);
@@ -1012,8 +1021,11 @@ export class Anatomy3D {
       if (ridge.length > 1) B.line(flat(ridge), ridge.length, V.blue, 1.4 * widen);
     }
     B.gain = d.inner;
+    this.markPart?.("airway");
     this.airway(model, f, tele, view, k);
+    this.markPart?.("velum");
     this.velum(f, k);
+    this.markPart?.("other");
     this.epiglottis(f, k, artCut);
     this.larynx(model, f, a, tele, k, dt, rest.head.y0, cut);
 
@@ -1021,7 +1033,9 @@ export class Anatomy3D {
     const soft = (v: Vec[], it: number) => flat(chaikin(v.map((p) => [p.x, p.y] as Pt), it).map(([x, y]) => ({ x, y })));
     const upperLip = soft(f.upperLip, 2), lowerLip = soft(f.lowerLip, 2);
     B.gain = d.features;
+    this.markPart?.("lips");
     const mouth = this.lips(rest, model, f, a, phi, widen);
+    this.markPart?.("other");
     const chin = rest.chin;
     const chinNow = new Float32Array(chin.length);
     for (let i = 0; i < chin.length; i += 3) {
@@ -1047,16 +1061,21 @@ export class Anatomy3D {
       });
     }
 
+    this.markPart?.("tongue");
     this.tongue(f, a, k);
     B.line(tongueOutline, f.tongue.length, V.green, 1.6, { hot: true, alpha: artCut });
     B.gain = d.bone;
+    this.markPart?.("jaw");
     B.line(chinNow, chinNow.length / 3, V.red, 1.5, { hot: true, alpha: artCut });
     B.gain = 1;
+    this.markPart?.("lips");
     B.line(upperLip, upperLip.length / 3, V.pink, 1.5, { hot: true, alpha: artCut });
     B.line(lowerLip, lowerLip.length / 3, V.pink, 1.5, { hot: true, alpha: artCut });
     B.gain = d.inner;
+    this.markPart?.("velum");
     line(chaikin(f.velum.map((p) => [p.x, p.y] as Pt), 3).map(([x, y]) => ({ x, y })), V.white, 1.25, { alpha: 0.92 }, artCut);
 
+    this.markPart?.("other");
     if (view.particles && tele) this.drawParticles(model, f, tele, dt);
     if (tele) this.drawTurbulence(model, f, tele);
     this.caliper = null;

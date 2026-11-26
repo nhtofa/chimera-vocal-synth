@@ -12,7 +12,7 @@ mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,
-  args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream"],
+  args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
 });
 const errors: string[] = [];
 const logs: string[] = [];
@@ -289,6 +289,60 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   });
   logs.push(`[${tag}] rate after the run: ${rate} Hz`);
   if (rate !== 48000) errors.push(`[${tag}] this machine fell back to ${rate} Hz (it keeps up at 48 kHz)`);
+  // Follow the same link a user sees. Watch Chromium's fake mic to verify both sound and release.
+  await page.context().addInitScript(() => {
+    const devices = navigator.mediaDevices;
+    const capture = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = async (constraints) => {
+      const stream = await capture(constraints);
+      (window as unknown as { micTrack: MediaStreamTrack }).micTrack = stream.getAudioTracks()[0];
+      return stream;
+    };
+  });
+  const newTab = page.context().waitForEvent("page");
+  await page.getByRole("link", { name: "Microphone", exact: true }).click();
+  const micPage = await newTab;
+  micPage.on("pageerror", (e) => errors.push(`[${tag}] microphone: ${e.message}`));
+  // The standalone page once shipped its charts without the head. Check actual pixels before
+  // any microphone permission, and require the projection to change when viewed from the side.
+  const head = micPage.locator("#head-view");
+  const snapshot = () => head.evaluate((c: HTMLCanvasElement) => c.toDataURL());
+  const rest = await snapshot();
+  const anatomicalPixels = await head.evaluate((c: HTMLCanvasElement) => {
+    const rgba = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let visible = 0;
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] > 32) visible++;
+    return visible;
+  });
+  if (anatomicalPixels < 2000) errors.push(`[${tag}] standalone head is blank`);
+  await head.press("ArrowLeft");
+  const rotated = await snapshot();
+  if (rotated === rest) errors.push(`[${tag}] 3D head did not rotate`);
+  await micPage.getByRole("button", { name: "2D section" }).click();
+  const section = micPage.getByRole("button", { name: "2D section" });
+  if (await snapshot() === rotated || await section.getAttribute("aria-pressed") !== "true") errors.push(`[${tag}] head did not switch to a section`);
+  const beforeZoom = await snapshot();
+  await micPage.getByRole("button", { name: "Zoom in" }).click();
+  if (await snapshot() === beforeZoom) errors.push(`[${tag}] zoom did not change the head`);
+  await micPage.getByRole("button", { name: "Whole head", exact: true }).click();
+  if (await snapshot() === rest) errors.push(`[${tag}] whole head matched the inside-mouth view`);
+  await micPage.getByRole("button", { name: "Tongue profile", exact: true }).click();
+  if (!await micPage.locator("#contour-credit").isVisible()) errors.push(`[${tag}] tongue profile is missing its reference`);
+  await micPage.getByRole("button", { name: "Inside mouth", exact: true }).click();
+  const nearTeeth = micPage.getByRole("checkbox", { name: "Show near teeth" });
+  await nearTeeth.check();
+  if (await snapshot() === rest) errors.push(`[${tag}] near teeth stayed hidden`);
+  await nearTeeth.uncheck();
+  await micPage.getByRole("button", { name: "Reset view" }).click();
+  if (await snapshot() !== rest) errors.push(`[${tag}] head did not return to its home view`);
+  await micPage.getByRole("button", { name: "Start microphone" }).click();
+  await micPage.waitForFunction(() => document.querySelector("#peak")?.textContent?.endsWith(" Hz"));
+  if (await snapshot() === rest) errors.push(`[${tag}] microphone signal did not animate the head`);
+  await micPage.screenshot({ path: `${outDir}/${tag}-microphone.png`, fullPage: true });
+  await micPage.getByRole("button", { name: "Stop microphone" }).click();
+  const micReleased = await micPage.evaluate(() => (window as unknown as { micTrack: MediaStreamTrack }).micTrack.readyState === "ended");
+  if (!micReleased) errors.push(`[${tag}] Stop left the microphone active`);
+  await micPage.close();
   await page.close();
 }
 
